@@ -36,17 +36,30 @@ class HUD:
         self._fps_t = now
         self.fps = 0.9 * self.fps + 0.1 * (1 / dt if dt > 0 else 0)
 
-        # tracked boxes
+        # tracked objects: polygon outline from the seg mask (box only if no mask)
+        fill = img.copy()
+        labels = []
         for t in tracks:
             x, y, w, h = t.bbox
             sc = scores.get(t.track_id)
             hot = sc and sc[1] > config.THETA
             col = (0, 200, 255) if hot else (120, 220, 120)
-            cv2.rectangle(img, (x, y), (x + w, y + h), col, 2)
+            person = t.label == "person"
+            if t.poly is not None:
+                if not person:           # people (incl. your own arm) get outline only, no fill
+                    cv2.fillPoly(fill, [t.poly], col)
+                cv2.polylines(img, [t.poly], True, col, 1 if person else 2, cv2.LINE_AA)
+                top = tuple(t.poly[t.poly[:, 1].argmin()])   # label above the shape's top point
+            else:
+                cv2.rectangle(img, (x, y), (x + w, y + h), col, 2)
+                top = (x, y)
             lab = f"{t.label} #{t.track_id}"
             if self.debug and sc:
                 lab += f"  S={sc[1]:.2f} d={t.dwell_s:.1f}s"
-            _text(img, lab, (x + 4, max(y - 8, 16)), 0.5, col)
+            labels.append((lab, (max(top[0] - 20, 4), max(top[1] - 8, 16)), col))
+        img = cv2.addWeighted(fill, 0.25, img, 0.75, 0)
+        for lab, org, col in labels:
+            _text(img, lab, org, 0.5, col)
 
         # answer / nudge card, fades after CARD_SECONDS
         age = now - self.card_t
