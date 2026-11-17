@@ -4,7 +4,7 @@ A head-mounted camera assistant that sees what you see, remembers it, and speaks
 
 ```
 Camera ─► latest-frame slot ─┬─► HUD (main thread, ~30 fps)
-                             └─► YOLO11n track (~20 ms) ─┬─► memory.py  (SQLite, write on APPEAR/MOVE/GONE)
+                             └─► YOLO11s-seg track (~33 ms) ─┬─► memory.py  (SQLite, write on APPEAR/MOVE/GONE)
                                                          └─► relevance.py ─(S > θ)─► Qwen3-VL 4B ─► say + HUD card
  Question (SPACE / T) ─► Whisper ─► router ─┬─ "where is X?" ─► memory template (instant, no hallucination)
                                             └─ anything else ─► Qwen3-VL 4B with current frame
@@ -41,7 +41,7 @@ macOS will ask for **camera** and **microphone** access for your terminal on fir
 ```
 S = w_n·novelty + w_d·dwell + w_c·conf + w_p·prior[label] − w_r·exp(−Δt/τ)
 ```
-plus two hard gates: **dwell ≥ 1 s** (a glance never triggers) and a **per-label 120 s cooldown**.
+plus hard gates: **dwell ≥ 0.8 s** (a glance never triggers), **smoothed conf ≥ 0.35**, and a **per-label 120 s cooldown**.
 
 **θ = 2.8, not the 1.8 in the spec.** Novelty + full dwell alone add up to 2.0, so with θ = 1.8 a chair held for 2 s would trigger a nudge. θ has to sit above the class-independent terms (~2.5) so the **prior** decides:
 
@@ -61,15 +61,18 @@ After speaking, the recency term keeps the next nudge ≥ ~25 s away. The VLM ca
 - **Source opens after models load.** A clip doesn't start playing until YOLO, the VLM and Whisper are warm, so the first seconds of the backup demo aren't skipped.
 - **Memory context belongs to the track.** Each track remembers which labels it was seen *with*. On GONE, the sighting's timestamp is refreshed, but its location ("near") comes from where the object actually was, not whatever is in view 2 s later.
 - **Landmark ranking.** "Near the X" prefers static objects (laptop > table > couch > tv…) and never uses a person.
+- **Polygon outlines.** `yolo11s-seg` gives a per-object mask; the HUD draws its outline, not a box. People (including your own arm in a head-mounted view) get an outline only, no fill.
+- **Objects in your hand.** Fingers cover part of the object and drop YOLO's confidence, so the tracker gets boxes down to 0.1 (ByteTrack uses weak boxes to keep tracks alive). Confidence bars apply only where it matters: memory writes need 0.45 (a false "bottle" can't poison recall) and nudges need a smoothed 0.35.
+- **Label voting.** Each track's label is the confidence-weighted majority over its lifetime, so a phone in the hand doesn't flip to "remote" and get nudged twice.
 - **Privacy.** Rows and crops older than 60 min are deleted automatically.
 
 ## Measured (M5, 16 GB)
 
 | Stage | Target | Measured |
 | --- | --- | --- |
-| YOLO track | ≤ 60 ms | ~20 ms (first MPS call ~2 s, done at warm-up) |
-| HUD | ≥ 15 fps | ~28 fps |
-| VLM, warm | ≤ 2 s | 1.1–1.4 s |
+| YOLO11s-seg track | ≤ 60 ms | ~33 ms median (first MPS call ~2 s, done at warm-up) |
+| HUD | ≥ 15 fps | ~26 fps |
+| VLM, warm | ≤ 2 s | 0.5–1.5 s |
 | Startup (warm cache) | — | ~10 s |
 
 ## Tests
