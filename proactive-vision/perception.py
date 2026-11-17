@@ -23,6 +23,9 @@ class Track:
     recorded: bool = False # has a trusted sighting been written to memory yet
     poly: object = field(default=None, repr=False)   # Nx2 int32 outline from the seg mask
     votes: Counter = field(default_factory=Counter, repr=False)  # conf-weighted label votes
+    still_anchor: tuple = None   # centre when it last stopped moving
+    still_since: float = 0.0     # time it has been still since
+    snapshot: object = field(default=None, repr=False)  # (frame, bbox, poly, relation, ts) while settled
     crop: object = field(default=None, repr=False)
 
     @property
@@ -83,6 +86,9 @@ class Perception:
                 tr.poly = poly.astype("int32") if poly is not None and len(poly) >= 3 else None
                 self.current.append(tr)
                 cx, cy = tr.center
+                sa = tr.still_anchor
+                if sa is None or ((cx - sa[0]) ** 2 + (cy - sa[1]) ** 2) ** 0.5 > W * config.STILL_FRAC:
+                    tr.still_anchor, tr.still_since = (cx, cy), now
                 tr.dwell_s = tr.dwell_s + dt if (cx0 <= cx <= cx1 and cy0 <= cy <= cy1) else 0.0
                 tr.crop = frame[max(y1, 0):max(y2, 0), max(x1, 0):max(x2, 0)]
                 ax, ay = tr.anchor
