@@ -1,5 +1,6 @@
 """YOLO tracking → per-track state + APPEAR / MOVE / GONE events."""
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 
 from ultralytics import YOLO
@@ -18,6 +19,10 @@ class Track:
     dwell_s: float = 0.0   # continuous seconds near frame centre
     anchor: tuple = None   # centre at last APPEAR/MOVE event
     near: set = field(default_factory=set)   # labels co-visible while this track was visible
+    conf_ema: float = 0.0  # smoothed confidence (in-hand objects flicker as fingers move)
+    recorded: bool = False # has a trusted sighting been written to memory yet
+    poly: object = field(default=None, repr=False)   # Nx2 int32 outline from the seg mask
+    votes: Counter = field(default_factory=Counter, repr=False)  # conf-weighted label votes
     crop: object = field(default=None, repr=False)
 
     @property
@@ -56,19 +61,26 @@ class Perception:
 
         boxes = r.boxes
         if boxes is not None and boxes.id is not None:
-            for xyxy, tid, cls, conf in zip(boxes.xyxy.tolist(), boxes.id.int().tolist(),
-                                            boxes.cls.int().tolist(), boxes.conf.tolist()):
+            polys = r.masks.xy if r.masks is not None else [None] * len(boxes)
+            for xyxy, tid, cls, conf, poly in zip(boxes.xyxy.tolist(), boxes.id.int().tolist(),
+                                                  boxes.cls.int().tolist(), boxes.conf.tolist(), polys):
                 x1, y1, x2, y2 = (int(v) for v in xyxy)
                 bbox = (x1, y1, x2 - x1, y2 - y1)
-                label = r.names[cls]
+                raw = r.names[cls]
                 tr = self.tracks.get(tid)
                 if tr is None:
-                    tr = Track(tid, label, conf, bbox, now, now)
+                    tr = Track(tid, raw, conf, bbox, now, now, conf_ema=conf)
+                    tr.votes[raw] += conf
                     self.tracks[tid] = tr
                     tr.anchor = tr.center
                     events.append(("APPEAR", tr))
                 else:
-                    tr.label, tr.conf, tr.bbox, tr.last_seen = label, conf, bbox, now
+                    # label = conf-weighted majority over the track's life (stops phone→remote flicker)
+                    tr.votes[raw] += conf
+                    tr.label = tr.votes.most_common(1)[0][0]
+                    tr.conf, tr.bbox, tr.last_seen = conf, bbox, now
+                    tr.conf_ema += config.CONF_EMA * (conf - tr.conf_ema)
+                tr.poly = poly.astype("int32") if poly is not None and len(poly) >= 3 else None
                 self.current.append(tr)
                 cx, cy = tr.center
                 tr.dwell_s = tr.dwell_s + dt if (cx0 <= cx <= cx1 and cy0 <= cy <= cy1) else 0.0
