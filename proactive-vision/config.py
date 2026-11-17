@@ -1,8 +1,11 @@
 """All tunables in one place. Tune the relevance numbers live with the debug panel (press D)."""
 
 # ---- models ----
-YOLO_MODEL = "yolo11n.pt"                       # auto-downloads on first run
-YOLO_CONF = 0.4
+YOLO_MODEL = "yolo11s-seg.pt"                   # seg → polygon outlines; ~33 ms on M5 (auto-downloads)
+YOLO_CONF = 0.1            # low on purpose: ByteTrack uses weak boxes to keep in-hand (occluded) objects tracked
+MEMORY_MIN_CONF = 0.45     # only write sightings we trust, so a false "bottle" can't poison recall
+NUDGE_MIN_CONF = 0.35      # smoothed confidence required before a nudge
+CONF_EMA = 0.3             # smoothing for per-track confidence (fingers make raw conf jumpy)
 YOLO_IMGSZ = 640
 VLM_MODEL = "mlx-community/Qwen3-VL-4B-Instruct-4bit"
 VLM_FALLBACK = "mlx-community/Qwen3-VL-2B-Instruct-4bit"
@@ -37,8 +40,8 @@ TAU_S = 20.0
 # class-independent terms (~2.5) so the prior decides: book 3.4 / bottle 3.2 fire, cup 2.55 / chair 2.45 don't.
 THETA = 2.8
 NOVELTY_WINDOW_S = 5 * 60  # label counts as novel if not *nudged about* in this window
-DWELL_CAP_S = 2.0          # dwell term saturates at 1.0 after this many seconds
-MIN_DWELL_S = 1.0          # hard gate: never nudge on a passing glance
+DWELL_CAP_S = 1.5          # dwell term saturates at 1.0 after this many seconds
+MIN_DWELL_S = 0.8          # hard gate: never nudge on a passing glance
 LABEL_COOLDOWN_S = 120     # never nudge about the same label twice in this window
 
 PRIORS = {
