@@ -125,13 +125,17 @@ class App:
             self._seq = seq
             events = self.per.step(frame)
             visible = self.per.visible()
-            labels = [t.label for t in self.per.current]
+            # co-occurrence only from confident tracks, so a faint false detection never becomes a landmark
+            labels = [t.label for t in self.per.current if t.conf_ema >= config.NUDGE_MIN_CONF]
             for t in self.per.current:
                 t.near.update(labels)
-            for ev, tr in events:
-                if ev in ("APPEAR", "MOVE"):
+            moved = {tr.track_id for ev, tr in events if ev == "MOVE"}
+            for tr in self.per.current:       # write on first trusted sighting, then on MOVE
+                if tr.conf >= config.MEMORY_MIN_CONF and (not tr.recorded or tr.track_id in moved):
                     self.mem.record(tr, labels)
-                elif ev == "GONE":   # use what it was seen WITH, not what's in view now
+                    tr.recorded = True
+            for ev, tr in events:
+                if ev == "GONE" and tr.recorded:   # use what it was seen WITH, not what's in view now
                     self.mem.update_last_seen(tr, tr.near)
                 if self.args.verbose:
                     self.log(f"{ev} {tr.label}#{tr.track_id} conf={tr.conf:.2f}")
