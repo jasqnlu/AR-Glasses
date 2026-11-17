@@ -5,9 +5,10 @@ A head-mounted camera assistant that sees what you see, remembers it, and speaks
 ```
 Camera ─► latest-frame slot ─┬─► HUD (main thread, ~30 fps)
                              └─► YOLO11s-seg track (~33 ms) ─┬─► memory.py  (SQLite, write on APPEAR/MOVE/GONE)
-                                                         └─► relevance.py ─(S > θ)─► Qwen3-VL 4B ─► say + HUD card
- Question (SPACE / T) ─► Whisper ─► router ─┬─ "where is X?" ─► memory template (instant, no hallucination)
-                                            └─ anything else ─► Qwen3-VL 4B with current frame
+                                                             ├─► rag.py: settled object leaves view → "where it was" memory
+                                                             └─► relevance.py ─(S > θ)─► Qwen3-VL 4B ─► say + HUD card
+ Question (SPACE / T) ─► Whisper ─► router ─┬─ "where is X?" ─► put-down memory / sightings → template (no hallucination)
+                                            └─ anything else ─► top-k memories (MiniLM) + current frame ─► Qwen3-VL 4B
 ```
 
 **Facts come from memory; language comes from the model.**
@@ -55,6 +56,18 @@ plus hard gates: **dwell ≥ 0.8 s** (a glance never triggers), **smoothed conf 
 
 After speaking, the recency term keeps the next nudge ≥ ~25 s away. The VLM can still veto with `SKIP`. All weights and priors are in `config.py`; the `D` panel shows each term live.
 
+## Object memory (text RAG)
+
+When a personal object (bottle, phone, book, laptop, bag, cup…) sits still for 1.5 s and then leaves view, it's remembered:
+
+1. **Geometry, instant and deterministic:** `on the dining table, left of the laptop` (`rag.relation`).
+2. **VLM description, when the VLM is idle:** the frame is sent with the object outlined in green → `clear plastic bottle | on the kitchen counter`. Captions queue behind nudges and questions, so they never delay a reply.
+3. **Embedding:** `all-MiniLM-L6-v2` on CPU (~10 ms). The vector is stored in the same SQLite file; search is brute-force cosine (an hour of memories is a few hundred rows, so no vector DB is needed).
+
+"Where's my bottle?" uses the latest put-down memory: *"Your bottle was on the kitchen counter, left of the laptop, about 3 minutes ago."* Any other question retrieves the **most relevant** memories (not just the latest 3) and gives them to the VLM with the current frame, so "what did my bottle look like?" works with the bottle out of view.
+
+Guards: the VLM is told the outline is only a marker; place text describing a hand/held/"not visible" is discarded in favour of geometry; twin detections within 5 s make a single memory. `--no-rag` turns embeddings off.
+
 ## Design notes
 
 - **One MLX thread.** The VLM and Whisper share one worker thread (MLX binds GPU streams to threads). A VLM trigger that arrives while the worker is busy is *dropped*, not queued.
@@ -78,7 +91,7 @@ After speaking, the recency term keeps the next nudge ≥ ~25 s away. The VLM ca
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest -q test_logic.py   # router, memory recall, nudge / glance / restraint / cooldown
+.venv/bin/python -m pytest -q test_logic.py   # router, recall, relevance, geometry, RAG search (12 tests)
 ```
 
 ## Limits
