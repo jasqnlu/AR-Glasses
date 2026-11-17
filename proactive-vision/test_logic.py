@@ -12,7 +12,7 @@ from relevance import Relevance
 
 def mk(label, conf=0.8, dwell=0.0, tid=1):
     now = time.time()
-    return Track(tid, label, conf, (100, 100, 50, 80), now, now, dwell_s=dwell)
+    return Track(tid, label, conf, (100, 100, 50, 80), now, now, dwell_s=dwell, conf_ema=conf)
 
 
 # ---- router
