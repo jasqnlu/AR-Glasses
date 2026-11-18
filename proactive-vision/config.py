@@ -28,6 +28,17 @@ DB_PATH = "memory.db"
 CROPS_DIR = "crops"
 RETENTION_S = 60 * 60      # privacy: forget after 60 min
 
+# ---- object memory / RAG ----
+EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"   # 384-d, ~10 ms/sentence on CPU
+# Personal things people lose: these get a "where it was put down" memory when they leave view
+REMEMBER_LABELS = {"bottle", "cell phone", "book", "laptop", "backpack", "handbag", "remote",
+                   "cup", "scissors", "umbrella", "mouse", "keyboard", "wine glass", "teddy bear"}
+SURFACES = {"dining table", "bed", "couch", "chair", "bench", "toilet", "sink", "refrigerator", "oven"}
+STILL_FRAC = 0.03          # centre moving < 3% of frame width counts as still
+SETTLE_S = 1.5             # still this long → "this is where it is" snapshot
+RAG_K = 3                  # memories handed to the VLM per question
+RAG_MIN_SIM = 0.2          # ignore memories less similar than this
+
 # ---- relevance ----
 # S = w_n*novelty + w_d*dwell + w_c*conf + w_p*prior - w_r*exp(-dt/tau)
 W_NOVELTY = 1.0

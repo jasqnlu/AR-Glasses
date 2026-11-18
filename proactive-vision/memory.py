@@ -5,6 +5,7 @@ import threading
 import time
 
 import cv2
+import numpy as np
 
 import config
 
@@ -16,6 +17,17 @@ CREATE TABLE IF NOT EXISTS sightings (
 );
 CREATE INDEX IF NOT EXISTS idx_label_ts ON sightings(label, ts);
 CREATE TABLE IF NOT EXISTS utterances (ts REAL, text TEXT, trigger TEXT);
+-- one row per "put down here" moment; text is what gets embedded and retrieved
+CREATE TABLE IF NOT EXISTS memories (
+  id INTEGER PRIMARY KEY,
+  ts REAL, label TEXT,
+  relation TEXT,      -- deterministic geometry: "on the dining table, left of the laptop"
+  appearance TEXT,    -- VLM: "blue metal water bottle"
+  place TEXT,         -- VLM: "on the kitchen counter by the sink"
+  text TEXT,          -- appearance + place + relation, the retrieval document
+  vec BLOB,           -- float32 L2-normalised embedding of text
+  crop_path TEXT
+);
 """
 
 
@@ -70,6 +82,49 @@ class Memory:
         now = time.time()
         return [f"{lab} near {near or 'nothing notable'}, {int(now-ts)}s ago" for ts, lab, near in rows]
 
+    # ---- object memories (RAG)
+    def add_memory(self, label, ts, relation, text, vec=None, crop=None):
+        crop_path = None
+        if crop is not None and crop.size:
+            crop_path = os.path.join(config.CROPS_DIR, f"mem_{int(ts*1000)}_{label.replace(' ', '_')}.jpg")
+            cv2.imwrite(crop_path, crop)
+        with self.lock:
+            cur = self.db.execute(
+                "INSERT INTO memories (ts,label,relation,text,vec,crop_path) VALUES (?,?,?,?,?,?)",
+                (ts, label, relation, text, None if vec is None else vec.tobytes(), crop_path))
+            self.db.commit()
+            return cur.lastrowid
+
+    def describe_memory(self, mem_id, appearance, place, text, vec=None):
+        with self.lock:
+            self.db.execute("UPDATE memories SET appearance=?, place=?, text=?, vec=COALESCE(?, vec) WHERE id=?",
+                            (appearance, place, text, None if vec is None else vec.tobytes(), mem_id))
+            self.db.commit()
+
+    def latest_memory(self, label):
+        with self.lock:
+            row = self.db.execute(
+                "SELECT ts, relation, appearance, place, text FROM memories WHERE label=? "
+                "ORDER BY ts DESC LIMIT 1", (label,)).fetchone()
+        if not row:
+            return None
+        ts, rel, app, place, text = row
+        return {"label": label, "age_s": time.time() - ts, "relation": rel,
+                "appearance": app, "place": place, "text": text}
+
+    def search(self, qvec, k=3, min_sim=0.0):
+        """Top-k memories by cosine similarity. Brute force: an hour of memories is a few hundred rows."""
+        with self.lock:
+            rows = self.db.execute("SELECT ts, label, text, vec FROM memories WHERE vec IS NOT NULL").fetchall()
+        if not rows:
+            return []
+        M = np.stack([np.frombuffer(r[3], np.float32) for r in rows])
+        sims = M @ qvec
+        now = time.time()
+        order = np.argsort(-sims)[:k]
+        return [{"label": rows[i][1], "text": rows[i][2], "sim": float(sims[i]), "age_s": now - rows[i][0]}
+                for i in order if sims[i] >= min_sim]
+
     def log_utterance(self, text, trigger):
         with self.lock:
             self.db.execute("INSERT INTO utterances VALUES (?,?,?)", (time.time(), text, trigger))
@@ -84,8 +139,10 @@ class Memory:
         cutoff = now - config.RETENTION_S
         with self.lock:
             paths = self.db.execute(
-                "SELECT crop_path FROM sightings WHERE ts<? AND crop_path IS NOT NULL", (cutoff,)).fetchall()
+                "SELECT crop_path FROM sightings WHERE ts<? AND crop_path IS NOT NULL UNION ALL "
+                "SELECT crop_path FROM memories WHERE ts<? AND crop_path IS NOT NULL", (cutoff, cutoff)).fetchall()
             self.db.execute("DELETE FROM sightings WHERE ts<?", (cutoff,))
+            self.db.execute("DELETE FROM memories WHERE ts<?", (cutoff,))
             self.db.execute("DELETE FROM utterances WHERE ts<?", (cutoff,))
             self.db.commit()
         for (p,) in paths:

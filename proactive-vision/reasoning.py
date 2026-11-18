@@ -16,7 +16,9 @@ import config
 
 PROACTIVE_PROMPT = ("You are a wearable assistant. In under 15 words, say the single most useful "
                     "thing about this. If nothing is useful, reply exactly: SKIP.")
-QUESTION_PROMPT = "The user asks: '{q}'. Recent memory: {rows}. Answer in under 15 words."
+QUESTION_PROMPT = ("The image is what the user sees right now. Things you remember seeing earlier "
+                   "(may be out of view now): {rows}. The user asks: '{q}'. If the answer is about "
+                   "something not in the image, answer from memory. Answer in under 15 words.")
 
 
 class MLXWorker:

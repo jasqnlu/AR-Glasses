@@ -11,6 +11,7 @@ import argparse
 import re
 import threading
 import time
+from collections import deque
 
 import cv2
 
@@ -20,6 +21,7 @@ from capture import Capture
 from memory import Memory
 from perception import Perception
 from relevance import Relevance
+import rag
 
 
 # ------------------------------------------------------------------ router
@@ -44,14 +46,25 @@ def best_landmark(labels):
     return min(labels, key=lambda l: rank.get(l, len(rank))) if labels else None
 
 
+def _when(age_s):
+    mins = int(age_s // 60)
+    return "less than a minute ago" if mins < 1 else f"about {mins} minute{'s' if mins != 1 else ''} ago"
+
+
 def memory_answer(label, memory, visible_labels):
     if label in visible_labels:
         return f"Your {label} is right in front of you."
     hit = memory.last_seen(label)
-    if not hit:
+    m = memory.latest_memory(label)
+    if not hit and not m:
         return f"I haven't seen your {label} yet."
-    mins = int(hit["age_s"] // 60)
-    when = "less than a minute ago" if mins < 1 else f"about {mins} minute{'s' if mins != 1 else ''} ago"
+    # A "put down here" memory is the best answer, unless the object was seen somewhere else after it.
+    if m and (m["place"] or m["relation"]) and (not hit or m["age_s"] <= hit["age_s"] + 5):
+        where = m["place"] or m["relation"]
+        if m["place"] and m["relation"] and m["relation"].split()[-1] not in m["place"]:
+            where += f", {m['relation']}"          # add geometry if the VLM didn't name that landmark
+        return f"Your {label} was {where}, {_when(m['age_s'])}."
+    when = _when(hit["age_s"])
     near = best_landmark(hit["near"].split(", ") if hit["near"] else [])
     where = f"near the {near}" if near else "where you left it"
     return f"Your {label} was {where}, {when}."
@@ -71,6 +84,10 @@ class App:
         self.frame = None
         self.running = True
         self._seq = -1
+        self.embed = None
+        self.captions = deque(maxlen=8)   # (memory_id, label, outlined_frame) waiting for an idle VLM
+        self.question_waiting = False     # a user question outranks captions for the VLM
+        self._last_remembered = {}        # label → ts of last memory (dedupe twin detections)
 
         if not args.no_vlm or not args.no_asr:
             from reasoning import MLXWorker
@@ -89,6 +106,14 @@ class App:
             except Exception as e:  # noqa: BLE001 — cut list #2: fall back to typed questions
                 print(f"[asr] disabled ({e!r}); use T to type questions")
                 self.ptt = None
+
+        if not args.no_rag:
+            try:
+                print("[init] loading embedder…")
+                self.embed = rag.Embedder()
+                self.embed("warm up")
+            except Exception as e:  # noqa: BLE001 — fall back to recency-only memory
+                print(f"[rag] disabled ({e!r})")
 
         # warm YOLO (first MPS call ~2 s), THEN open the source — a clip must not start playing
         # while models load, or its first seconds are silently skipped.
@@ -134,9 +159,17 @@ class App:
                 if tr.conf >= config.MEMORY_MIN_CONF and (not tr.recorded or tr.track_id in moved):
                     self.mem.record(tr, labels)
                     tr.recorded = True
+            confident = [t for t in self.per.current if t.conf_ema >= config.NUDGE_MIN_CONF]
+            for tr in confident:              # settled personal object → keep a "this is where it is" snapshot
+                if (tr.label in config.REMEMBER_LABELS and tr.recorded
+                        and time.time() - tr.still_since >= config.SETTLE_S
+                        and (tr.snapshot is None or time.time() - tr.snapshot[4] > 0.5)):
+                    tr.snapshot = (frame, tr.bbox, tr.poly, rag.relation(tr, confident), time.time())
             for ev, tr in events:
                 if ev == "GONE" and tr.recorded:   # use what it was seen WITH, not what's in view now
                     self.mem.update_last_seen(tr, tr.near)
+                    if tr.snapshot is not None:
+                        self.remember(tr)
                 if self.args.verbose:
                     self.log(f"{ev} {tr.label}#{tr.track_id} conf={tr.conf:.2f}")
             self.mem.purge()
@@ -145,6 +178,37 @@ class App:
             self.tracks, self.scores, self.frame = visible, dict(self.rel.scores), frame
             if best is not None:
                 self.nudge(best)
+            else:
+                self.pump_captions()          # nudges first; captions only when nothing else wants the VLM
+
+    # ---- object memory (RAG)
+    def remember(self, tr):
+        """Object left view after sitting still: store where it was now, describe it when the VLM is idle."""
+        frame, bbox, poly, rel, ts = tr.snapshot
+        last = self._last_remembered.get(tr.label, 0)
+        self._last_remembered[tr.label] = ts
+        if ts - last < 5:              # duplicate detection of the same object — one memory is enough
+            return
+        text = rag.memory_text(tr.label, None, None, rel)
+        vec = self.embed(text) if self.embed else None
+        x, y, w, h = bbox
+        mem_id = self.mem.add_memory(tr.label, ts, rel, text, vec, frame[max(y, 0):y + h, max(x, 0):x + w])
+        self.log(f"remember {tr.label}#{tr.track_id}: {text!r}")
+        if self.reasoner is not None:
+            self.captions.append((mem_id, tr.label, rel, rag.outlined(frame, bbox, poly)))
+
+    def pump_captions(self):
+        if not self.captions or self.reasoner is None or self.reasoner.busy() or self.question_waiting:
+            return
+        mem_id, label, rel, img = self.captions.popleft()
+
+        def done(out):
+            app, place = rag.parse_description(out, label)
+            text = rag.memory_text(label, app, place, rel)
+            vec = self.embed(text) if self.embed else None
+            self.mem.describe_memory(mem_id, app, place, text, vec)
+            self.log(f"described {label}: {out!r} -> {text!r}")
+        self.reasoner.ask(img, rag.DESCRIBE_PROMPT.format(label=label), done)
 
     def nudge(self, track):
         s = self.rel.scores[track.track_id][1]
@@ -183,12 +247,30 @@ class App:
             self.say("Visual questions need the VLM enabled.", "answer", "router")
         elif self.frame is not None:
             self.set_status("thinking…")
-            ok = self.reasoner.question(self.frame, q, self.mem.recent(3),
-                                        lambda a: (self.set_status(""),
-                                                   self.say(a or "Sorry, I couldn't tell.", "answer", "vlm")))
-            if not ok:
-                self.set_status("")
-                self.say("One sec, still thinking.", "answer", "busy")
+            self.question_waiting = True
+            threading.Thread(target=self._ask_vlm, args=(q, self.frame), daemon=True).start()
+
+    def context_rows(self, q):
+        """RAG: the memories most relevant to the question (falls back to most recent sightings)."""
+        if self.embed:
+            hits = self.mem.search(self.embed(q), config.RAG_K, config.RAG_MIN_SIM)
+            if hits:
+                self.log("rag " + " | ".join(f"{h['sim']:.2f} {h['text']}" for h in hits))
+                return [f"{h['text']} ({_when(h['age_s'])})" for h in hits]
+        return self.mem.recent(3)
+
+    def _ask_vlm(self, q, frame):
+        rows = self.context_rows(q)
+        deadline = time.time() + 8            # wait out a caption / nudge already running (≤ ~1.5 s)
+        while self.reasoner.busy() and time.time() < deadline:
+            time.sleep(0.05)
+        ok = self.reasoner.question(frame, q, rows,
+                                    lambda a: (self.set_status(""),
+                                               self.say(a or "Sorry, I couldn't tell.", "answer", "vlm")))
+        self.question_waiting = False
+        if not ok:
+            self.set_status("")
+            self.say("One sec, still thinking.", "answer", "busy")
 
     # ---- main loop (HUD + keys)
     def run(self):
@@ -243,10 +325,13 @@ class App:
         while not self.cap.ended and self.running:
             time.sleep(0.2)
         time.sleep(0.5)
+        while self.captions and self.reasoner:   # let pending "where it was" descriptions finish
+            self.pump_captions()
+            time.sleep(0.1)
         for q in self.args.ask or []:
             self.handle_question(q)
-        if self.reasoner:
-            while self.reasoner.busy():
+            time.sleep(0.2)
+            while self.reasoner and (self.reasoner.busy() or self.question_waiting):
                 time.sleep(0.1)
         time.sleep(0.5)
         self.shutdown()
@@ -262,6 +347,7 @@ def main():
     ap.add_argument("--source", default="0", help="camera index or video path")
     ap.add_argument("--no-vlm", action="store_true", help="skip Qwen3-VL (template nudges only)")
     ap.add_argument("--no-asr", action="store_true", help="skip Whisper (typed questions only)")
+    ap.add_argument("--no-rag", action="store_true", help="skip the embedding model (recency-only memory)")
     ap.add_argument("--small", action="store_true", help="use the 2B VLM")
     ap.add_argument("--mute", action="store_true", help="HUD only, no `say`")
     ap.add_argument("--fresh", action="store_true", help="wipe memory.db on start")
