@@ -27,7 +27,7 @@ class Relevance:
         parts = {
             "n": config.W_NOVELTY * novelty,
             "d": config.W_DWELL * dwell,
-            "c": config.W_CONF * track.conf,
+            "c": config.W_CONF * track.conf_ema,
             "p": config.W_PRIOR * prior,
             "r": -config.W_RECENT * recent,
         }
@@ -41,7 +41,7 @@ class Relevance:
         for t in tracks:
             s, parts = self.score(t, now)
             self.scores[t.track_id] = (t.label, s, parts)
-            gated = (t.dwell_s < config.MIN_DWELL_S or
+            gated = (t.dwell_s < config.MIN_DWELL_S or t.conf_ema < config.NUDGE_MIN_CONF or
                      now - self.last_nudged.get(t.label, -1e9) < config.LABEL_COOLDOWN_S)
             if s > best_s and not gated:
                 best, best_s = t, s
