@@ -349,7 +349,8 @@ def main():
     ap.add_argument("--no-asr", action="store_true", help="skip Whisper (typed questions only)")
     ap.add_argument("--no-rag", action="store_true", help="skip the embedding model (recency-only memory)")
     ap.add_argument("--small", action="store_true", help="use the 2B VLM")
-    ap.add_argument("--mute", action="store_true", help="HUD only, no `say`")
+    ap.add_argument("--mute", action="store_true", help="HUD only, no speech")
+    ap.add_argument("--tts", choices=["auto", "elevenlabs", "say"], help="voice backend (default: auto)")
     ap.add_argument("--fresh", action="store_true", help="wipe memory.db on start")
     ap.add_argument("--headless", action="store_true", help="no window; for smoke tests on a clip")
     ap.add_argument("--ask", action="append", help="(headless) question(s) to ask after the clip")
@@ -360,6 +361,9 @@ def main():
         config.VLM_MODEL = config.VLM_FALLBACK
     if args.mute:
         config.SPEAK = False
+    if args.tts:
+        config.TTS_BACKEND = args.tts
+    print(f"[tts] voice: {voice.backend() if config.SPEAK else 'muted'}")
     App(args).run()
 
 
