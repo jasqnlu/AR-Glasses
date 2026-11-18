@@ -1,6 +1,6 @@
 # Proactive Vision Assistant
 
-A head-mounted camera assistant that sees what you see, remembers it, and speaks up **only when something is worth saying**. It runs 100% locally on a MacBook: no cloud APIs, and footage never leaves the device.
+A head-mounted camera assistant that sees what you see, remembers it, and speaks up **only when something is worth saying**. It runs locally on a MacBook. Footage, audio and memory never leave the device; the only optional cloud call is ElevenLabs text-to-speech, which receives just the text of each spoken line (`--tts say` keeps it 100% offline).
 
 ```
 Camera ─► latest-frame slot ─┬─► HUD (main thread, ~30 fps)
@@ -23,6 +23,15 @@ uv pip install --python .venv/bin/python -r requirements.txt
 
 macOS will ask for **camera** and **microphone** access for your terminal on first run.
 
+**Voice (optional):** for ElevenLabs instead of macOS `say`, create `proactive-vision/.env` (gitignored):
+
+```
+ELEVENLABS_API_KEY=sk_...
+# ELEVENLABS_VOICE_ID=JBFqnCBsd6RMkjVDRZzb   # optional, default premade voice "George"
+```
+
+With a key set, `--tts auto` (the default) streams `eleven_flash_v2_5` audio (~0.3–0.5 s to first sound). Any network or quota error falls back to `say` for that line; a rejected key switches to `say` for the session.
+
 ## Run
 
 | Command | What |
@@ -31,6 +40,7 @@ macOS will ask for **camera** and **microphone** access for your terminal on fir
 | `python main.py --source clips/pov.mp4` | Backup demo: a recorded POV clip through the same pipeline |
 | `python main.py --fresh` | Wipe memory first (do this before a demo run) |
 | `python main.py --small` | 2B VLM if memory pressure goes yellow |
+| `python main.py --tts say` | Fully offline voice (macOS `say`) even if an ElevenLabs key is set |
 | `python main.py --no-vlm --no-asr` | Fast iteration on perception and relevance |
 | `python main.py --headless --source clip.mp4 --ask "where's my water bottle?"` | Scripted smoke test |
 
@@ -86,6 +96,7 @@ Guards: the VLM is told the outline is only a marker; place text describing a ha
 | YOLO11s-seg track | ≤ 60 ms | ~33 ms median (first MPS call ~2 s, done at warm-up) |
 | HUD | ≥ 15 fps | ~26 fps |
 | VLM, warm | ≤ 2 s | 0.5–1.5 s |
+| ElevenLabs first audio | — | ~0.3–0.5 s (streamed PCM) |
 | Startup (warm cache) | — | ~10 s |
 
 ## Tests
