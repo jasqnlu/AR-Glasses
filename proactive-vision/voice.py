@@ -3,7 +3,8 @@
 Backends:
   elevenlabs — streams 16 kHz PCM from ElevenLabs and plays chunks as they arrive (~0.3–0.5 s to first audio).
                Only the TEXT of the line leaves the machine; frames and audio never do.
-  say        — macOS `say`, fully offline. Automatic fallback if ElevenLabs fails.
+  say        — macOS `say`, fully offline. The default, and the fallback if ElevenLabs fails.
+Turn ElevenLabs on with `python main.py --eleven`.
 """
 import os
 import subprocess
@@ -20,9 +21,7 @@ _eleven_ok = True        # turned off for the session on a bad key
 
 
 def backend():
-    if config.TTS_BACKEND == "say":
-        return "say"
-    if config.TTS_BACKEND in ("auto", "elevenlabs") and os.environ.get("ELEVENLABS_API_KEY") and _eleven_ok:
+    if config.TTS_BACKEND == "elevenlabs" and os.environ.get("ELEVENLABS_API_KEY") and _eleven_ok:
         return "elevenlabs"
     return "say"
 
