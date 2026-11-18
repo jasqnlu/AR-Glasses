@@ -8,6 +8,7 @@
 Threads: main = HUD + keys | perception = YOLO + memory + relevance | mlx = VLM + Whisper
 """
 import argparse
+import os
 import re
 import threading
 import time
@@ -349,7 +350,9 @@ def main():
     ap.add_argument("--no-asr", action="store_true", help="skip Whisper (typed questions only)")
     ap.add_argument("--no-rag", action="store_true", help="skip the embedding model (recency-only memory)")
     ap.add_argument("--small", action="store_true", help="use the 2B VLM")
-    ap.add_argument("--mute", action="store_true", help="HUD only, no `say`")
+    ap.add_argument("--mute", action="store_true", help="HUD only, no speech")
+    ap.add_argument("--eleven", action="store_true",
+                    help="speak with ElevenLabs instead of macOS `say` (needs ELEVENLABS_API_KEY in .env)")
     ap.add_argument("--fresh", action="store_true", help="wipe memory.db on start")
     ap.add_argument("--headless", action="store_true", help="no window; for smoke tests on a clip")
     ap.add_argument("--ask", action="append", help="(headless) question(s) to ask after the clip")
@@ -360,6 +363,11 @@ def main():
         config.VLM_MODEL = config.VLM_FALLBACK
     if args.mute:
         config.SPEAK = False
+    if args.eleven:
+        config.TTS_BACKEND = "elevenlabs"
+        if not os.environ.get("ELEVENLABS_API_KEY"):
+            print("[tts] --eleven given but no ELEVENLABS_API_KEY in .env or the environment; using say")
+    print(f"[tts] voice: {voice.backend() if config.SPEAK else 'muted'}")
     App(args).run()
 
 
