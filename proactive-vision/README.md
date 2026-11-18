@@ -1,6 +1,6 @@
 # Proactive Vision Assistant
 
-A head-mounted camera assistant that sees what you see, remembers it, and speaks up **only when something is worth saying**. It runs locally on a MacBook. Footage, audio and memory never leave the device; the only optional cloud call is ElevenLabs text-to-speech, which receives just the text of each spoken line (`--tts say` keeps it 100% offline).
+A head-mounted camera assistant that sees what you see, remembers it, and speaks up **only when something is worth saying**. It runs 100% locally on a MacBook by default: footage, audio and memory never leave the device. The only optional cloud call is ElevenLabs text-to-speech (`--eleven`), which receives just the text of each spoken line.
 
 ```
 Camera ─► latest-frame slot ─┬─► HUD (main thread, ~30 fps)
@@ -23,14 +23,14 @@ uv pip install --python .venv/bin/python -r requirements.txt
 
 macOS will ask for **camera** and **microphone** access for your terminal on first run.
 
-**Voice (optional):** for ElevenLabs instead of macOS `say`, create `proactive-vision/.env` (gitignored):
+**Voice (optional):** the default voice is macOS `say` (offline). To use ElevenLabs with `--eleven`, create `proactive-vision/.env` (gitignored):
 
 ```
 ELEVENLABS_API_KEY=sk_...
 # ELEVENLABS_VOICE_ID=JBFqnCBsd6RMkjVDRZzb   # optional, default premade voice "George"
 ```
 
-With a key set, `--tts auto` (the default) streams `eleven_flash_v2_5` audio (~0.3–0.5 s to first sound). Any network or quota error falls back to `say` for that line; a rejected key switches to `say` for the session.
+`python main.py --eleven` then streams `eleven_flash_v2_5` audio (~0.3–0.5 s to first sound). A key in `.env` alone does nothing; ElevenLabs only runs with the flag. Any network or quota error falls back to `say` for that line; a rejected key switches to `say` for the session.
 
 ## Run
 
@@ -40,7 +40,7 @@ With a key set, `--tts auto` (the default) streams `eleven_flash_v2_5` audio (~0
 | `python main.py --source clips/pov.mp4` | Backup demo: a recorded POV clip through the same pipeline |
 | `python main.py --fresh` | Wipe memory first (do this before a demo run) |
 | `python main.py --small` | 2B VLM if memory pressure goes yellow |
-| `python main.py --tts say` | Fully offline voice (macOS `say`) even if an ElevenLabs key is set |
+| `python main.py --eleven` | Speak with ElevenLabs instead of macOS `say` (key in `.env`) |
 | `python main.py --no-vlm --no-asr` | Fast iteration on perception and relevance |
 | `python main.py --headless --source clip.mp4 --ask "where's my water bottle?"` | Scripted smoke test |
 
