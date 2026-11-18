@@ -100,8 +100,9 @@ UNTRACKABLE = ["keys", "key", "wallet", "glasses", "sunglasses", "airpods", "cha
 CARD_SECONDS = 5.0
 CARD_MAX_CHARS = 60
 SPEAK = True
-# "auto" = ElevenLabs if ELEVENLABS_API_KEY is set (in .env or the environment), else macOS `say`
-TTS_BACKEND = os.environ.get("TTS_BACKEND", "auto")          # auto | elevenlabs | say
+# Offline macOS `say` by default. `python main.py --eleven` switches to ElevenLabs
+# (needs ELEVENLABS_API_KEY in .env or the environment).
+TTS_BACKEND = "say"                                          # say | elevenlabs
 ELEVEN_MODEL = "eleven_flash_v2_5"                           # lowest-latency model (~0.3–0.5 s first audio)
 ELEVEN_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")   # premade "George"
 ELEVEN_TIMEOUT_S = 4
