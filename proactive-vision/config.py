@@ -1,4 +1,19 @@
 """All tunables in one place. Tune the relevance numbers live with the debug panel (press D)."""
+import os
+
+
+def _load_env(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")):
+    """Minimal .env loader (KEY=VALUE lines) so secrets stay out of the repo. Real env vars win."""
+    if not os.path.exists(path):
+        return
+    for line in open(path):
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+_load_env()
 
 # ---- models ----
 YOLO_MODEL = "yolo11s-seg.pt"                   # seg → polygon outlines; ~33 ms on M5 (auto-downloads)
@@ -85,3 +100,8 @@ UNTRACKABLE = ["keys", "key", "wallet", "glasses", "sunglasses", "airpods", "cha
 CARD_SECONDS = 5.0
 CARD_MAX_CHARS = 60
 SPEAK = True
+# "auto" = ElevenLabs if ELEVENLABS_API_KEY is set (in .env or the environment), else macOS `say`
+TTS_BACKEND = os.environ.get("TTS_BACKEND", "auto")          # auto | elevenlabs | say
+ELEVEN_MODEL = "eleven_flash_v2_5"                           # lowest-latency model (~0.3–0.5 s first audio)
+ELEVEN_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")   # premade "George"
+ELEVEN_TIMEOUT_S = 4
