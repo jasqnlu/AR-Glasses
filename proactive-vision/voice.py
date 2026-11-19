@@ -50,6 +50,21 @@ def _stop_say():
         _say_proc.terminate()
 
 
+def _open_output(sd, attempts=4):
+    """Open the speaker stream, retrying: CoreAudio intermittently refuses (err -50 / PortAudio -9986)
+    right after the output device changes or wakes. The HTTP stream keeps buffering meanwhile."""
+    import time
+    for i in range(attempts):
+        try:
+            return sd.RawOutputStream(samplerate=16000, channels=1, dtype="int16")
+        except sd.PortAudioError as e:
+            if i == attempts - 1:
+                raise
+            print(f"[tts] speaker busy ({e}); retrying")
+            time.sleep(0.15 * (i + 1))
+            sd._terminate(); sd._initialize()     # re-scan devices in case the output changed
+
+
 def _eleven(text, gen):
     global _eleven_ok
     import requests
@@ -63,7 +78,7 @@ def _eleven(text, gen):
             _eleven_ok = False
             raise RuntimeError("ElevenLabs rejected the API key (401); using `say` from now on")
         r.raise_for_status()
-        with sd.RawOutputStream(samplerate=16000, channels=1, dtype="int16") as out:
+        with _open_output(sd) as out:
             carry = b""
             for chunk in r.iter_content(chunk_size=3200):       # 0.1 s of audio per chunk
                 if gen != _gen:                                 # a newer line started: stop talking
